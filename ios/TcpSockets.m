@@ -83,6 +83,7 @@ RCT_EXPORT_METHOD(destroy:(nonnull NSNumber*)cId) {
 }
 
 - (void)onData:(NSNumber *)clientID data:(NSData *)data {
+	NSLog(@"data received, id: %@, data: %@", clientID, [[NSString alloc] initWithData:data encoding:kCFStringEncodingUTF8]);
 	[self sendEventWithName:@"data" body:@{ @"id": clientID, @"data" : [data base64EncodedStringWithOptions:0] }];
 }
 
