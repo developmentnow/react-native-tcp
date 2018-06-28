@@ -51,6 +51,7 @@ NSString *const RCTTCPErrorDomain = @"RCTTCPErrorDomain";
 }
 
 - (BOOL)connect:(NSString *)host port:(int)port withOptions:(NSDictionary *)options error:(NSError **)error {
+	NSLog(@"connecting to host: %@ on port: %d isSecure: %@", host, port, [options[@"isSecure"] boolValue] ? @"true" : @"false");
 	
 	if (_tcpSocket) {
 		if (error) {
@@ -59,9 +60,9 @@ NSString *const RCTTCPErrorDomain = @"RCTTCPErrorDomain";
 		return false;
 	}
 	
-	_isSecure = (port == 9182) ? true : false;
-	
+	_isSecure = [options[@"isSecure"] boolValue];
 	_tcpSocket = [[GCDAsyncSocket alloc] initWithDelegate:self delegateQueue:dispatch_get_main_queue()];
+	
 	[_tcpSocket setUserData: _id];
 	
 	if (_isSecure == true) {
@@ -151,7 +152,7 @@ NSString *const RCTTCPErrorDomain = @"RCTTCPErrorDomain";
 - (void)dropPendingSend:(NSNumber *)key {
 	
 	if (_isSecure) {
-		NSLog(@"do nothing");
+		// NSLog(@"do nothing");
 	} else {
 		[_lock lock];
 		@try {
@@ -176,14 +177,15 @@ NSString *const RCTTCPErrorDomain = @"RCTTCPErrorDomain";
 }
 
 - (void) writeData:(NSData *)data callback:(RCTResponseSenderBlock)callback {
+	NSLog(@"%@ socket attempting to write data", [_tcpSocket isSecure] ? @"secure" : @"insecure");
 	
 	if (callback) {
 		[self setPendingSend:callback forKey:@(_sendTag)];
 	}
 	
 	if (_isSecure) {
-		[_tcpSocket writeData:data withTimeout:60 tag:0];
-		[_tcpSocket readDataToData:[GCDAsyncSocket LFData] withTimeout:60 tag:0];
+		[_tcpSocket writeData:data withTimeout:60 tag:_sendTag];
+		[_tcpSocket readDataToData:[GCDAsyncSocket LFData] withTimeout:60 tag:_id.longValue];
 		_sendTag++;
 	} else {
 		[_tcpSocket writeData:data withTimeout:-1 tag:_sendTag];
@@ -230,8 +232,8 @@ NSString *const RCTTCPErrorDomain = @"RCTTCPErrorDomain";
 	}
 }
 
-- (void)socket:(GCDAsyncSocket *)sock didConnectToHost:(NSString *)host port:(uint16_t)port
-{
+- (void)socket:(GCDAsyncSocket *)sock didConnectToHost:(NSString *)host port:(uint16_t)port {
+	
 	if (!_clientDelegate) {
 		RCTLogWarn(@"didConnectToHost with nil clientDelegate for %@", [sock userData]);
 		return;
@@ -245,17 +247,18 @@ NSString *const RCTTCPErrorDomain = @"RCTTCPErrorDomain";
 				NSLog(@"Enabling backgrounding failed!");
 			}
 		}];
-		
-		NSMutableDictionary *settings = [NSMutableDictionary dictionaryWithCapacity:3];
-		[sock startTLS:settings];
+		NSLog(@"socket connected to host, starting TLS process...");
+		[sock startTLS:[NSMutableDictionary dictionaryWithCapacity:3]];
 		
 	} else {
+		NSLog(@"socket connected to host");
 		[_clientDelegate onConnect:self];
 		[sock readDataWithTimeout:-1 tag:_id.longValue];
 	}
 }
 
 - (void)socketDidSecure:(GCDAsyncSocket *)sock {
+	NSLog(@"socket did secure");
 	[_clientDelegate onConnect:self];
 }
 
