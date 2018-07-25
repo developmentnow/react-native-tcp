@@ -5,6 +5,7 @@ import android.util.SparseArray;
 
 import com.koushikdutta.async.AsyncNetworkSocket;
 import com.koushikdutta.async.AsyncSSLSocket;
+import com.koushikdutta.async.AsyncSSLSocketWrapper;
 import com.koushikdutta.async.AsyncServer;
 import com.koushikdutta.async.AsyncServerSocket;
 import com.koushikdutta.async.AsyncSocket;
@@ -16,11 +17,22 @@ import com.koushikdutta.async.callback.ConnectCallback;
 import com.koushikdutta.async.callback.DataCallback;
 import com.koushikdutta.async.callback.ListenCallback;
 
+import org.apache.http.conn.ssl.SSLSocketFactory;
+
 import java.io.IOException;
 import java.lang.ref.WeakReference;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
+import java.security.KeyManagementException;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.security.cert.X509Certificate;
+
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLEngine;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
 
 /**
  * Created by aprock on 12/29/15.
@@ -151,25 +163,53 @@ public final class TcpSocketManager {
                 }
             });
         } else {
-
-
-            mServer.connectSocket(socketAddress, new ConnectCallback() {
+            AsyncServer.getDefault().connectSocket(socketAddress, new ConnectCallback() {
                 @Override
-                public void onConnectCompleted(Exception ex, AsyncSSLSocket socket) {
-                    TcpSocketListener listener = mListener.get();
-                    if (ex == null) {
-                        mClients.put(cId, socket);
-                        setSocketCallbacks(cId, socket);
+                public void onConnectCompleted(Exception ex, final AsyncSocket socket) {
+                    try {
+                        TrustManager[] trustManagers = new TrustManager[]{createTrustAllTrustManager()};
+                        SSLContext sslContext = SSLContext.getInstance("SSL");
+                        sslContext.init(null, trustManagers, new SecureRandom());
+                        SSLEngine sslEngine = sslContext.createSSLEngine();
 
-                        if (listener != null) {
-                            listener.onConnect(cId, socketAddress);
-                        }
-                    } else if (listener != null) {
-                        listener.onError(cId, ex.getMessage());
+                        AsyncSSLSocketWrapper.handshake(socket, host, port, sslEngine, trustManagers, SSLSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER, true,
+                                new AsyncSSLSocketWrapper.HandshakeCallback() {
+                                    @Override
+                                    public void onHandshakeCompleted(Exception ex, final AsyncSSLSocket socket) {
+                                        TcpSocketListener listener = mListener.get();
+                                        if (ex == null) {
+                                            mClients.put(cId, socket);
+                                            setSocketCallbacks(cId, socket);
+
+                                            if (listener != null) {
+                                                listener.onConnect(cId, socketAddress);
+                                            }
+                                        } else if (listener != null) {
+                                            listener.onError(cId, ex.getMessage());
+                                        }
+                                    }
+                                });
+                    } catch (NoSuchAlgorithmException | KeyManagementException nsae) {
+                        throw new RuntimeException(nsae);
                     }
                 }
             });
         }
+    }
+
+    private TrustManager createTrustAllTrustManager() {
+        return new X509TrustManager() {
+            public X509Certificate[] getAcceptedIssuers() {
+                return null;
+            }
+
+            public void checkClientTrusted(X509Certificate[] certs, String authType) {
+
+            }
+
+            public void checkServerTrusted(X509Certificate[] certs, String authType) {
+            }
+        };
     }
 
     public void write(final Integer cId, final byte[] data) {
