@@ -31,6 +31,7 @@ import java.util.concurrent.ExecutionException;
  * The NativeModule acting as an api layer for {@link TcpSocketManager}
  */
 public final class TcpSockets extends ReactContextBaseJavaModule implements TcpSocketListener {
+    private static final String OPTIONS_KEY_IS_SECURE = "isSecure";
     private static final String TAG = "TcpSockets";
 
     private boolean mShuttingDown = false;
@@ -79,8 +80,8 @@ public final class TcpSockets extends ReactContextBaseJavaModule implements TcpS
 
     private void sendEvent(String eventName, WritableMap params) {
         mReactContext
-            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
-            .emit(eventName, params);
+                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                .emit(eventName, params);
     }
 
     @ReactMethod
@@ -103,12 +104,13 @@ public final class TcpSockets extends ReactContextBaseJavaModule implements TcpS
 
     @ReactMethod
     public void connect(final Integer cId, final @Nullable String host, final Integer port, final ReadableMap options) {
+
         new GuardedAsyncTask<Void, Void>(getReactApplicationContext()) {
             @Override
             protected void doInBackgroundGuarded(Void... params) {
                 // NOTE : ignoring options for now, just use the available interface.
                 try {
-                    socketManager.connect(cId, host, port);
+                    socketManager.connect(cId, host, port, isSecure(options));
                 } catch (UnknownHostException uhe) {
                     FLog.e(TAG, "connect", uhe);
                     onError(cId, uhe.getMessage());
@@ -148,7 +150,9 @@ public final class TcpSockets extends ReactContextBaseJavaModule implements TcpS
         end(cId);
     }
 
-    /** TcpSocketListener */
+    /**
+     * TcpSocketListener
+     */
 
     @Override
     public void onConnection(Integer serverId, Integer clientId, InetSocketAddress socketAddress) {
@@ -233,5 +237,17 @@ public final class TcpSockets extends ReactContextBaseJavaModule implements TcpS
         eventParams.putString("error", error);
 
         sendEvent("error", eventParams);
+    }
+
+
+    private static boolean isSecure(ReadableMap options) {
+        if (options.hasKey(OPTIONS_KEY_IS_SECURE)) {
+            try {
+                return options.getBoolean(OPTIONS_KEY_IS_SECURE);
+            } catch (Exception ex) {
+
+            }
+        }
+        return false;
     }
 }
