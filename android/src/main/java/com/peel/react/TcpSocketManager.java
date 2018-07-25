@@ -163,7 +163,7 @@ public final class TcpSocketManager {
                 }
             });
         } else {
-            AsyncServer.getDefault().connectSocket(socketAddress, new ConnectCallback() {
+            mServer.connectSocket(socketAddress, new ConnectCallback() {
                 @Override
                 public void onConnectCompleted(Exception ex, final AsyncSocket socket) {
                     try {
