@@ -4,6 +4,8 @@ import android.support.annotation.Nullable;
 import android.util.SparseArray;
 
 import com.koushikdutta.async.AsyncNetworkSocket;
+import com.koushikdutta.async.AsyncSSLSocket;
+import com.koushikdutta.async.AsyncSSLSocketWrapper;
 import com.koushikdutta.async.AsyncServer;
 import com.koushikdutta.async.AsyncServerSocket;
 import com.koushikdutta.async.AsyncSocket;
@@ -15,11 +17,22 @@ import com.koushikdutta.async.callback.ConnectCallback;
 import com.koushikdutta.async.callback.DataCallback;
 import com.koushikdutta.async.callback.ListenCallback;
 
+import org.apache.http.conn.ssl.SSLSocketFactory;
+
 import java.io.IOException;
 import java.lang.ref.WeakReference;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
+import java.security.KeyManagementException;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.security.cert.X509Certificate;
+
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLEngine;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
 
 /**
  * Created by aprock on 12/29/15.
@@ -42,7 +55,7 @@ public final class TcpSocketManager {
             public void onCompleted(Exception ex) {
                 TcpSocketListener listener = mListener.get();
                 if (listener != null) {
-                    listener.onClose(cId, ex==null?null:ex.getMessage());
+                    listener.onClose(cId, ex == null ? null : ex.getMessage());
                 }
             }
         });
@@ -120,6 +133,10 @@ public final class TcpSocketManager {
     }
 
     public void connect(final Integer cId, final @Nullable String host, final Integer port) throws UnknownHostException, IOException {
+        connect(cId, host, port, false);
+    }
+
+    public void connect(final Integer cId, final @Nullable String host, final Integer port, final boolean isSecure) throws UnknownHostException, IOException {
         // resolve the address
         final InetSocketAddress socketAddress;
         if (host != null) {
@@ -128,28 +145,81 @@ public final class TcpSocketManager {
             socketAddress = new InetSocketAddress(port);
         }
 
-        mServer.connectSocket(socketAddress, new ConnectCallback() {
-            @Override
-            public void onConnectCompleted(Exception ex, AsyncSocket socket) {
-              TcpSocketListener listener = mListener.get();
-                if (ex == null) {
-                    mClients.put(cId, socket);
-                    setSocketCallbacks(cId, socket);
+        if (!isSecure) {
+            mServer.connectSocket(socketAddress, new ConnectCallback() {
+                @Override
+                public void onConnectCompleted(Exception ex, AsyncSocket socket) {
+                    TcpSocketListener listener = mListener.get();
+                    if (ex == null) {
+                        mClients.put(cId, socket);
+                        setSocketCallbacks(cId, socket);
 
-                    if (listener != null) {
-                        listener.onConnect(cId, socketAddress);
+                        if (listener != null) {
+                            listener.onConnect(cId, socketAddress);
+                        }
+                    } else if (listener != null) {
+                        listener.onError(cId, ex.getMessage());
                     }
-                } else if (listener != null) {
-                   listener.onError(cId, ex.getMessage());
                 }
+            });
+        } else {
+            mServer.connectSocket(socketAddress, new ConnectCallback() {
+                @Override
+                public void onConnectCompleted(Exception ex, final AsyncSocket socket) {
+                    try {
+                        TrustManager[] trustManagers = new TrustManager[]{createTrustAllTrustManager()};
+                        SSLContext sslContext = SSLContext.getInstance("SSL");
+                        sslContext.init(null, trustManagers, new SecureRandom());
+                        SSLEngine sslEngine = sslContext.createSSLEngine();
+
+                        AsyncSSLSocketWrapper.handshake(socket, host, port, sslEngine, trustManagers, SSLSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER, true,
+                                new AsyncSSLSocketWrapper.HandshakeCallback() {
+                                    @Override
+                                    public void onHandshakeCompleted(Exception ex, final AsyncSSLSocket socket) {
+                                        TcpSocketListener listener = mListener.get();
+                                        if (ex == null) {
+                                            mClients.put(cId, socket);
+                                            setSocketCallbacks(cId, socket);
+
+                                            if (listener != null) {
+                                                listener.onConnect(cId, socketAddress);
+                                            }
+                                        } else if (listener != null) {
+                                            listener.onError(cId, ex.getMessage());
+                                        }
+                                    }
+                                });
+                    } catch (NoSuchAlgorithmException | KeyManagementException nsae) {
+                        throw new RuntimeException(nsae);
+                    }
+                }
+            });
+        }
+    }
+
+    private TrustManager createTrustAllTrustManager() {
+        return new X509TrustManager() {
+            public X509Certificate[] getAcceptedIssuers() {
+                return null;
             }
-        });
+
+            public void checkClientTrusted(X509Certificate[] certs, String authType) {
+
+            }
+
+            public void checkServerTrusted(X509Certificate[] certs, String authType) {
+            }
+        };
     }
 
     public void write(final Integer cId, final byte[] data) {
         Object socket = mClients.get(cId);
-        if (socket != null && socket instanceof AsyncSocket) {
-            ((AsyncSocket) socket).write(new ByteBufferList(data));
+        if (socket != null) {
+            if (socket instanceof AsyncSocket) {
+                ((AsyncSocket) socket).write(new ByteBufferList(data));
+            } else if (socket instanceof AsyncSSLSocket) {
+                ((AsyncSSLSocket) socket).write(new ByteBufferList(data));
+            }
         }
     }
 
@@ -158,13 +228,15 @@ public final class TcpSocketManager {
         if (socket != null) {
             if (socket instanceof AsyncSocket) {
                 ((AsyncSocket) socket).close();
+            } else if (socket instanceof AsyncSSLSocket) {
+                ((AsyncSSLSocket) socket).close();
             } else if (socket instanceof AsyncServerSocket) {
                 ((AsyncServerSocket) socket).stop();
             }
         } else {
             TcpSocketListener listener = mListener.get();
             if (listener != null) {
-               listener.onError(cId, "unable to find socket");
+                listener.onError(cId, "unable to find socket");
             }
         }
     }
